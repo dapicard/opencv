@@ -1507,7 +1507,14 @@ static AVStream *icv_add_video_stream_FFMPEG(AVFormatContext *oc,
     }
 
     //if(codec_tag) c->codec_tag=codec_tag;
-    codec = avcodec_find_encoder(c->codec_id);
+    char* enc_name = getenv("OPENCV_FFMPEG_ENCODER");
+    if(enc_name != NULL) {
+        fprintf(stderr, "Set FFMPEG encoder to %s \n", enc_name);
+        codec = avcodec_find_encoder_by_name(enc_name);
+    }
+    if(!codec) {
+        codec = avcodec_find_encoder(c->codec_id);
+    }
     fprintf(stderr, "Encoding codec found: %s \n", codec->name);
     c->codec_type = AVMEDIA_TYPE_VIDEO;
 
@@ -2105,7 +2112,6 @@ bool CvVideoWriter_FFMPEG::open( const char * filename, int fourcc,
         codec = avcodec_find_encoder_by_name(enc_name);
     }
     if(!codec) {
-        fprintf(stderr, "Find FFMPEG encoder by codec_id: %d \n", c->codec_id);
         codec = avcodec_find_encoder(c->codec_id);
     }
     if (!codec) {
