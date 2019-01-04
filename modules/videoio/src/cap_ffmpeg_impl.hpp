@@ -876,6 +876,7 @@ bool CvCapture_FFMPEG::open( const char* _filename )
 #if LIBAVFORMAT_BUILD >= CALC_FFMPEG_VERSION(52, 111, 0)
 #ifndef NO_GETENV
     char* options = getenv("OPENCV_FFMPEG_CAPTURE_OPTIONS");
+    fprintf(stderr, "Given capture options: %s \n", options);
     if(options == NULL)
     {
         av_dict_set(&dict, "rtsp_transport", "tcp", 0);
@@ -883,8 +884,10 @@ bool CvCapture_FFMPEG::open( const char* _filename )
     else
     {
 #if LIBAVUTIL_BUILD >= (LIBAVUTIL_VERSION_MICRO >= 100 ? CALC_FFMPEG_VERSION(52, 17, 100) : CALC_FFMPEG_VERSION(52, 7, 0))
+        fprintf(stderr, "Parsing capture options: %s \n", options);
         av_dict_parse_string(&dict, options, ";", "|", 0);
 #else
+        fprintf(stderr, "Setting default capture options \n");
         av_dict_set(&dict, "rtsp_transport", "tcp", 0);
 #endif
     }
@@ -941,6 +944,7 @@ bool CvCapture_FFMPEG::open( const char* _filename )
             if(av_dict_get(dict, "video_codec", NULL, 0) == NULL) {
                 codec = avcodec_find_decoder(enc->codec_id);
             } else {
+                fprintf(stderr, "Set decoding codec to: %s \n", av_dict_get(dict, "video_codec", NULL, 0)->value);
                 codec = avcodec_find_decoder_by_name(av_dict_get(dict, "video_codec", NULL, 0)->value);
             }
             if (!codec ||
@@ -1565,8 +1569,15 @@ static AVStream *icv_add_video_stream_FFMPEG(AVFormatContext *oc,
     }
 
     //if(codec_tag) c->codec_tag=codec_tag;
-    codec = avcodec_find_encoder(c->codec_id);
-
+    char* enc_name = getenv("OPENCV_FFMPEG_ENCODER");
+    if(enc_name != NULL) {
+        fprintf(stderr, "Set FFMPEG encoder to %s \n", enc_name);
+        codec = avcodec_find_encoder_by_name(enc_name);
+    }
+    if(!codec) {
+        codec = avcodec_find_encoder(c->codec_id);
+    }
+    fprintf(stderr, "Encoding codec found: %s \n", codec->name);
     c->codec_type = AVMEDIA_TYPE_VIDEO;
 
 #if LIBAVCODEC_BUILD >= CALC_FFMPEG_VERSION(54,25,0)
@@ -1578,10 +1589,12 @@ static AVStream *icv_add_video_stream_FFMPEG(AVFormatContext *oc,
 #endif
 
     /* put sample parameters */
-    int64_t lbit_rate = (int64_t)bitrate;
-    lbit_rate += (bitrate / 2);
-    lbit_rate = std::min(lbit_rate, (int64_t)INT_MAX);
-    c->bit_rate = lbit_rate;
+    if(strcmp(codec->name, "h264_nvenc") != 0) {
+        int64_t lbit_rate = (int64_t)bitrate;
+        lbit_rate += (bitrate / 2);
+        lbit_rate = std::min(lbit_rate, (int64_t)INT_MAX);
+        c->bit_rate = lbit_rate;
+    }
 
     // took advice from
     // http://ffmpeg-users.933282.n4.nabble.com/warning-clipping-1-dct-coefficients-to-127-127-td934297.html
@@ -1650,9 +1663,14 @@ static AVStream *icv_add_video_stream_FFMPEG(AVFormatContext *oc,
     if (c->codec_id == AV_CODEC_ID_H264) {
       c->gop_size = -1;
       c->qmin = -1;
-      c->bit_rate = 0;
-      if (c->priv_data)
+      if(strcmp(codec->name, "h264_nvenc") != 0) {
+        c->bit_rate = 0;
+        if (c->priv_data)
           av_opt_set(c->priv_data,"crf","23", 0);
+      } else {
+        // Fixed bitrate for NVENC
+        c->bit_rate = 4000000;
+      }
     }
 #endif
 
@@ -2258,7 +2276,14 @@ bool CvVideoWriter_FFMPEG::open( const char * filename, int fourcc,
 
     c->codec_tag = fourcc;
     /* find the video encoder */
-    codec = avcodec_find_encoder(c->codec_id);
+    char* enc_name = getenv("OPENCV_FFMPEG_ENCODER");
+    if(enc_name != NULL) {
+        fprintf(stderr, "Set FFMPEG encoder to %s \n", enc_name);
+        codec = avcodec_find_encoder_by_name(enc_name);
+    }
+    if(!codec) {
+        codec = avcodec_find_encoder(c->codec_id);
+    }
     if (!codec) {
         fprintf(stderr, "Could not find encoder for codec id %d: %s\n", c->codec_id, icvFFMPEGErrStr(
         #if LIBAVFORMAT_BUILD >= CALC_FFMPEG_VERSION(53, 2, 0)
@@ -2270,11 +2295,13 @@ bool CvVideoWriter_FFMPEG::open( const char * filename, int fourcc,
         return false;
     }
 
-    int64_t lbit_rate = (int64_t)c->bit_rate;
-    lbit_rate += (bitrate / 2);
-    lbit_rate = std::min(lbit_rate, (int64_t)INT_MAX);
-    c->bit_rate_tolerance = (int)lbit_rate;
-    c->bit_rate = (int)lbit_rate;
+    if(strcmp(codec->name, "h264_nvenc") != 0) {
+        int64_t lbit_rate = (int64_t)c->bit_rate;
+        lbit_rate += (bitrate / 2);
+        lbit_rate = std::min(lbit_rate, (int64_t)INT_MAX);
+        c->bit_rate_tolerance = (int)lbit_rate;
+        c->bit_rate = (int)lbit_rate;
+    }
 
     /* open the codec */
     if ((err=
